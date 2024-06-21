@@ -1,2 +1,6 @@
 .git
 rosbags/**
+build/
+install/
+log/
+**/*.db3

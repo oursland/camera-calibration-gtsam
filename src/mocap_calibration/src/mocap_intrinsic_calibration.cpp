@@ -23,6 +23,7 @@
 #include <opencv2/imgproc/imgproc.hpp>
 
 #include <gtsam/geometry/Cal3_S2.h>
+#include <gtsam/geometry/Cal3DS2.h>
 #include <gtsam/geometry/Cal3Fisheye.h>
 #include <gtsam/geometry/PinholeCamera.h>
 #include <gtsam/geometry/Point2.h>
@@ -92,14 +93,6 @@ public:
         target_tag_corner_positions_[i][3][0], target_tag_corner_positions_[i][3][1]);
     }
 
-    // Add a prior on pose x1.
-    pose_ = gtsam::Pose3(gtsam::Rot3::Ypr(M_PI / 2,0, -M_PI / 2), gtsam::Point3(0, 0, 0));
-    auto pose_noise = gtsam::noiseModel::Diagonal::Sigmas(
-      (gtsam::Vector(6)
-        << gtsam::Vector3::Constant(0.3), gtsam::Vector3::Constant(0.1))
-          .finished());  // 30cm std on x,y,z 0.1 rad on roll, pitch, yaw
-    graph_.addPrior(gtsam::Symbol('x', 1), pose_, pose_noise);
-
     image_mono_sub_ = image_transport::create_subscription(
       this, "image_mono",
       std::bind(
@@ -145,7 +138,9 @@ public:
 
           gtsam::Point2 measurement{ ip.x, ip.y };
           auto measurementNoise = gtsam::noiseModel::Isotropic::Sigma(2, 1.0);
-          graph_.emplace_shared<gtsam::GeneralSFMFactor2<gtsam::Cal3_S2> >(
+          // graph_.emplace_shared<gtsam::GeneralSFMFactor2<gtsam::Cal3_S2> >(
+          // graph_.emplace_shared<gtsam::GeneralSFMFactor2<gtsam::Cal3DS2> >(
+          graph_.emplace_shared<gtsam::GeneralSFMFactor2<gtsam::Cal3Fisheye> >(
             measurement,
             measurementNoise,
             gtsam::Symbol('x', pose_count_),
@@ -207,6 +202,23 @@ private:
     calibrate_camera_ = true;
 
     if(calibrate_camera_) {
+      // Add a prior on pose x1.
+      pose_ = gtsam::Pose3(gtsam::Rot3::Ypr(0, -M_PI, 0), gtsam::Point3(0, 0, 10));
+      auto pose_noise = gtsam::noiseModel::Diagonal::Sigmas(
+        (gtsam::Vector(6)
+          << gtsam::Vector3::Constant(10.0), gtsam::Vector3::Constant(M_PI))
+            .finished());  // 10m std on x,y,z M_PI rad on roll, pitch, yaw
+      graph_.addPrior(gtsam::Symbol('x', 1), pose_, pose_noise);
+
+      // The calibration pattern is known a-priori, so add it to the graph.
+      auto pointNoise = gtsam::noiseModel::Isotropic::Sigma(3, 0.001);
+      for (size_t j = 0; j < target_tag_corner_positions_.size(); ++j) {
+        for (auto k = 0; k < 4; ++k) {
+          auto pos = target_tag_corner_positions_[j][k];
+          graph_.addPrior(gtsam::Symbol('l', j*4 + k), pos, pointNoise);
+        }
+      }
+
       // camera_model: pinhole
       // intrinsics: [530.766, 532.796, 295.858, 266.729]
       // distortion_model: equidistant
@@ -214,21 +226,22 @@ private:
       // resolution: [640, 480]
 
       // Cal3_S2(fx, fy, s, u0, v0)
-      K_ = gtsam::Cal3_S2(
-        530.766, 532.796, 0.0, 295.858, 266.729);
+      // K_ = gtsam::Cal3_S2(
+      //   500, 500, 0.0, 720 / 2, 480 / 2);
 
       // Cal3Fisheye(fx, fy, s, u0,v0, k1, k2, k3, k4, tol = 1e-5)
-      // K_ = gtsam::Cal3Fisheye(
-      //   530.766, 532.796, 0.0, 295.858, 266.729,
-      //   -0.0865375, 0.0379966, -0.142482, 0.188395);
+      K_ = gtsam::Cal3Fisheye(
+        500, 500, 0.0, 720 / 2, 480 / 2,
+        0, 0, 0, 0);
 
-      // Add a prior on the position of the first landmark.
-      auto pointNoise = gtsam::noiseModel::Isotropic::Sigma(3, 0.1);
-      graph_.addPrior(gtsam::Symbol('l', 0), target_tag_corner_positions_[0][0], pointNoise);  // add directly to graph
+      // Cal3DS2(fx, fy, s, u0, v0, k1, k2, p1, p2, double tol = 1e-5)
+      // K_ = gtsam::Cal3DS2(
+      //   500, 500, 0.0, 720 / 2, 480 / 2,
+      //   0, 0, 0, 0);
 
       // Add a prior on the calibration.
-      // auto calNoise = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(9) << 500, 500, 0.1, 100, 100, 1.0, 1.0, 1.0, 1.0).finished());
-      auto calNoise = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(5) << 500, 500, 0.1, 100, 100).finished());
+      // auto calNoise = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(5) << 500, 500, 0.1, 100, 100).finished());
+      auto calNoise = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(9) << 500, 500, 0.1, 100, 100, 1.0, 1.0, 1.0, 1.0).finished());
       graph_.addPrior(gtsam::Symbol('K', 0), K_, calNoise);
 
       // Create the initial estimate to the solution
@@ -275,8 +288,9 @@ private:
   apriltag_ros::ApriltagDetector::Ptr detector_;
 
   gtsam::NonlinearFactorGraph graph_;
-  gtsam::Cal3_S2 K_;
-  // gtsam::Cal3Fisheye K_;
+  // gtsam::Cal3_S2 K_;
+  // gtsam::Cal3DS2 K_;
+  gtsam::Cal3Fisheye K_;
   gtsam::Pose3 pose_;
   unsigned int pose_count_;
 

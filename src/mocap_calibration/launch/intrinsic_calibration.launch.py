@@ -34,8 +34,13 @@ import platform
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.actions import EmitEvent
+from launch.actions import ExecuteProcess
+from launch.actions import RegisterEventHandler
 from launch.conditions import LaunchConfigurationEquals
 from launch.conditions import LaunchConfigurationNotEquals
+from launch.events import Shutdown
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.actions import LoadComposableNodes
@@ -82,8 +87,51 @@ def generate_launch_description():
         target_container=LaunchConfiguration('container'),
     )
 
+    # play calibration ros bag
+    play_calibration_bag = ExecuteProcess(
+        cmd=[
+            "ros2",
+            "bag",
+            "play",
+            "rosbags/rosbag2_2024_06_20-01_19_11",
+        ],
+        output="screen",
+    )
+
+    perform_calibration = ExecuteProcess(
+        cmd=[
+            "ros2",
+            "service",
+            "call",
+            "/feynman/calibrate",
+            "mocap_msgs/srv/Calibrate",
+        ],
+        output="screen",
+    )
+
+    perform_calibration_event = RegisterEventHandler(
+        OnProcessExit(
+            target_action=play_calibration_bag,
+            on_exit=[
+                perform_calibration,
+            ]
+        )
+    )
+
+    shutdown_event = RegisterEventHandler(
+        OnProcessExit(
+            target_action=perform_calibration,
+            on_exit=[
+                EmitEvent(event=Shutdown(reason='Completed'))
+            ]
+        )
+    )
+
     return LaunchDescription([
         arg_container,
         image_processing_container,
         load_composable_nodes,
+        play_calibration_bag,
+        perform_calibration_event,
+        shutdown_event,
     ])

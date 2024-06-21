@@ -24,4 +24,6 @@ RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
             -DPython_EXECUTABLE=$(which python) \
             -DPython3_EXECUTABLE=$(which python)
 
-CMD [ "/workspace/ros_entrypoint.sh", "ros2", "launch", "mocap_ps3eye_camera", "camera.launch.py" ]
+WORKDIR /
+
+CMD [ "/workspace/ros_entrypoint.sh", "ros2", "launch", "mocap_calibration", "intrinsic_calibration.launch.py" ]
